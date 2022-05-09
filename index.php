@@ -29,7 +29,6 @@ require_once __DIR__.'/src/BaiduBce/BceClientConfigOptions.php';
 require_once __DIR__.'/src/BaiduBce/BceHttpResponse.php';
 //Http
 require_once __DIR__.'/src/BaiduBce/Http/BceHttpClient.php';
-require_once __DIR__.'/src/BaiduBce/Http/GuzzleLogAdapter.php';
 require_once __DIR__.'/src/BaiduBce/Http/HttpContentTypes.php';
 require_once __DIR__.'/src/BaiduBce/Http/HttpHeaders.php';
 require_once __DIR__.'/src/BaiduBce/Http/HttpMethod.php';

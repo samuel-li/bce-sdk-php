@@ -26,11 +26,11 @@ use BaiduBce\Log\LogFactory;
 use BaiduBce\Util\HttpUtils;
 use BaiduBce\Util\DateUtils;
 
-use Guzzle\Http\Client;
-use Guzzle\Log\MessageFormatter;
-use Guzzle\Plugin\Log\LogPlugin;
-use Guzzle\Http\EntityBody;
-use Guzzle\Http\ReadLimitEntityBody;
+use GuzzleHttp\Client;
+use GuzzleHttp\MessageFormatter;
+use GuzzleHttp\HandlerStack;
+use GuzzleHttp\Psr7\Request;
+use GuzzleHttp\Psr7\Utils;
 
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
@@ -52,15 +52,24 @@ class BceHttpClient
 
     public function __construct()
     {
-        $this->guzzleClient = new Client();
         $this->logger = LogFactory::getLogger(get_class($this));
-        if (!($this->logger instanceof NullLogger)) {
-            $logPlugin = new LogPlugin(
-                new GuzzleLogAdapter(),
-                MessageFormatter::DEFAULT_FORMAT
-            );
-            $this->guzzleClient->addSubscriber($logPlugin);
-        }
+
+        $handlerStack = \GuzzleHttp\HandlerStack::create();
+        $handlerStack->push(
+            $this->createGuzzleLoggingMiddleware("{hostname} {req_header_User-Agent} - [{ts}] \"{method} {resource} {protocol}/{version}\" {code} {res_header_Content-Length}")
+        );        
+
+        $this->guzzleClient = new Client([
+            'handler' => $handlerStack,
+        ]);
+    }
+
+    private function createGuzzleLoggingMiddleware(string $messageFormat)
+    {
+        return \GuzzleHttp\Middleware::log(
+            $this->logger,
+            new \GuzzleHttp\MessageFormatter($messageFormat)
+        );
     }
 
     /**
@@ -151,11 +160,15 @@ class BceHttpClient
             //"Content-Length:0" from header, to work around this, we have to 
             //set body to a empty string
             $entityBody = "";
-        } else if (is_resource($body)) {
+        }
+        else if (is_resource($body)) {
             $offset = ftell($body);
-            $original = EntityBody::factory($body);
-            $entityBody = new ReadLimitEntityBody($original, $headers[HttpHeaders::CONTENT_LENGTH], $offset);
-        } else {
+            $entityBody = UTils::streamFor($body);
+            // $entityBody = $inStream->read($headers[HttpHeaders::CONTENT_LENGTH]);
+            // $original = EntityBody::factory($body);
+            // $entityBody = new ReadLimitEntityBody($original, $headers[HttpHeaders::CONTENT_LENGTH], $offset);
+        } 
+        else {
             $entityBody = $body;
         }
 
@@ -194,47 +207,51 @@ class BceHttpClient
                 $config[BceClientConfigOptions::SOCKET_TIMEOUT_IN_MILLIS]
                     / 1000.0;
         }
-        $guzzleRequest =
-            $this->guzzleClient->createRequest(
+        $guzzleRequest = new Request(
                 $httpMethod,
                 $url,
-                $headers,
-                $entityBody,
-                $guzzleRequestOptions
-            );
+                $headers, $entityBody);
+
         if ($outputStream !== null) {
-            $guzzleRequest->setResponseBody($outputStream);
+            $stream = Utils::streamFor($outputStream);
+            $guzzleRequestOptions['save_to'] = $stream;
         }
 
         // Send request
         try {
-            $guzzleResponse = $this->guzzleClient->send($guzzleRequest);
+            $guzzleResponse = $this->guzzleClient->send($guzzleRequest, $guzzleRequestOptions);
         } catch (\Exception $e) {
             throw new BceClientException($e->getMessage());
         }
 
         //statusCode < 200
-        if ($guzzleResponse->isInformational()) {
+        if ($guzzleResponse->getStatusCode() < 200) {
             throw new BceClientException('Can not handle 1xx Http status code');
         }
         //for chunked http response, http status code can not be trust
         //error code in http body also mean a failed http response
-        if ($guzzleResponse->getTransferEncoding() === 'chunked') {
-            if ($guzzleResponse->isContentType('json')) {
-                $responseBody = $guzzleResponse->json();
+        $resHeaders = $guzzleResponse->getHeaders();
+        if (!empty($resHeaders['Transfer-Encoding']) && $resHeaders['Transfer-Encoding'][0] === 'chunked') {
+            if (!empty($resHeaders['Content-Type']) && $resHeaders['Content-Type'][0] == 'json') {
+                $responseBody = json_decode($guzzleResponse->getBody()->getContents());
                 if (isset($responseBody['code'])) {
-                  $guzzleResponse->setStatus(500);
+                    $guzzleResponse->withStatus(500);
                 }
             }
         }
         //Successful means 2XX or 304
-        if (!$guzzleResponse->isSuccessful()) {
-            $requestId = $guzzleResponse->getHeader(HttpHeaders::BCE_REQUEST_ID);
+        if ($guzzleResponse->getStatusCode() < 200 ||
+             (
+                 $guzzleResponse->getStatusCode() > 300 &&
+                 $guzzleResponse->getStatusCode() != 304
+            ) 
+        ) {
+            $requestId = $guzzleResponse->getHeader(HttpHeaders::BCE_REQUEST_ID)[0];
             $message = $guzzleResponse->getReasonPhrase();
             $code = null;
-            if ($guzzleResponse->isContentType('json')) {
+            if (!empty($resHeaders['Content-Type']) && $resHeaders['Content-Type'][0] == 'json') {
                 try {
-                    $responseBody = $guzzleResponse->json();
+                    $responseBody = json_decode($guzzleResponse->getBody()->getContents());
                     if (isset($responseBody['message'])) {
                         $message = $responseBody['message'];
                     }
@@ -257,12 +274,12 @@ class BceHttpClient
             );
         }
         if ($outputStream === null) {
-            $body = $guzzleResponse->getBody(true);
+            $body = $guzzleResponse->getBody()->getContents();
         } else {
             $body = null;
             // detach the stream so that it will not be closed when the response
             // is garbage collected.
-            $guzzleResponse->getBody()->detachStream();
+            $guzzleResponse->getBody()->detach();
         }
         return array(
             'headers' => $this->parseHeaders($guzzleResponse),
@@ -277,9 +294,8 @@ class BceHttpClient
     private function parseHeaders($guzzleResponse)
     {
         $responseHeaders = array();
-        foreach ($guzzleResponse->getHeaders() as $header) {
-            $value = $header->toArray();
-            $responseHeaders[$header->getName()] = $value[0];
+        foreach ($guzzleResponse->getHeaders() as $name=>$header) {
+            $responseHeaders[$name] = $header[0];
         }
         return $responseHeaders;
     }

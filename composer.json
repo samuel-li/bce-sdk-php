@@ -19,15 +19,15 @@
     "issues": "https://github.com/baidubce/bce-sdk-php/issues"
   },
   "require": {
-    "php": ">=5.3.3",
-    "psr/log": "^1.0.0",
-    "guzzle/guzzle": "~3.9"
+    "php": ">=7.3",
+    "psr/log": "^1.0.1 || ^2.0 || ^3.0",
+    "guzzlehttp/guzzle": "^7.4"
   },
   "suggest": {
     "monolog/monolog": "Adds support for logging HTTP requests and responses"
   },
   "require-dev": {
-    "monolog/monolog": "~1.4"
+    "monolog/monolog": "^2.0"
   },
   "autoload": {
     "psr-0": {
@@ -37,6 +37,12 @@
   "extra": {
     "branch-alias": {
       "dev-master": "0.8.22-dev"
+    }
+  },
+  "repositories": {
+    "packagist": {
+      "type": "composer",
+      "url": "https://mirrors.aliyun.com/composer/"
     }
   }
 }
