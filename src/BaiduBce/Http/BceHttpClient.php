@@ -54,14 +54,18 @@ class BceHttpClient
     {
         $this->logger = LogFactory::getLogger(get_class($this));
 
-        $handlerStack = \GuzzleHttp\HandlerStack::create();
-        $handlerStack->push(
-            $this->createGuzzleLoggingMiddleware("{hostname} {req_header_User-Agent} - [{ts}] \"{method} {resource} {protocol}/{version}\" {code} {res_header_Content-Length}")
-        );        
+        if (!($this->logger instanceof NullLogger)) {
+            $handlerStack = \GuzzleHttp\HandlerStack::create();
+            $handlerStack->push(
+                $this->createGuzzleLoggingMiddleware("{hostname} {req_header_User-Agent} - [{ts}] \"{method} {resource} {protocol}/{version}\" {code} {res_header_Content-Length}")
+            ); 
 
-        $this->guzzleClient = new Client([
-            'handler' => $handlerStack,
-        ]);
+            $this->guzzleClient = new Client([
+                'handler' => $handlerStack,
+            ]);
+        } else {
+            $this->guzzleClient = new Client();
+        }
     }
 
     private function createGuzzleLoggingMiddleware(string $messageFormat)
